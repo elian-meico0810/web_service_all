@@ -96,6 +96,11 @@ DATABASES = {
     }
 }
 
+DB_NAME_SQL_SERVER = env('DB_NAME_SQL_SERVER')
+DB_USER_SQL_SERVER = env('DB_USER_SQL_SERVER')
+DB_PASSWORD_SQL_SERVER = env('DB_PASSWORD_SQL_SERVER')
+DB_HOST_SQL_SERVER = env('DB_HOST_SQL_SERVER')
+DB_PORT_SQL_SERVER = env('DB_PORT_SQL_SERVER', default='1433')
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators

@@ -14,7 +14,5 @@ class ScriptSqlServerSerializer(serializers.Serializer, EagerLoadingMixin):
             "null": "La ruta relativa no puede ser nulo",
         }
     )
-
-
-
+    
 
