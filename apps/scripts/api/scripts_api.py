@@ -8,12 +8,12 @@ from django.conf import settings
 from datetime import date
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from apps.base.reports.excel.download_extract_sql_server_template import download_extract_sql_server_template
 from apps.base.utils import formatErrors
-from apps.scripts.api.serializers.scripts_serializers import ScriptSqlServerSerializer
-from apps.base.extensions.custom_pagination.custom_pagination import BasicPagination
 from apps.base.helpers.format_response import FormatResponse
 from apps.base.helpers.custom_exception import CustomException
+from apps.scripts.api.serializers.scripts_serializers import ScriptSqlServerSerializer
+from apps.base.extensions.custom_pagination.custom_pagination import BasicPagination
+from apps.base.reports.excel.download_extract_sql_server_template import download_extract_sql_server_template
 
 class ScriptsViewSet(viewsets.GenericViewSet):
     model = None
@@ -25,7 +25,11 @@ class ScriptsViewSet(viewsets.GenericViewSet):
 
     # Configura tu conexión a SQL Server
     def extract_sql_from_rpt(self, rpt_path: str):
-        """Extrae la consulta SQL de un archivo .rpt de Crystal Reports y asigna automáticamente los parámetros según la fecha actual."""
+        """
+            Extrae la consulta SQL de un archivo .rpt 
+            de Crystal Reports y asigna automáticamente 
+            los parámetros según la fecha actual.
+        """
         try:
             print("Iniciando conexión con CrystalRuntime...")
             pythoncom.CoInitialize()
