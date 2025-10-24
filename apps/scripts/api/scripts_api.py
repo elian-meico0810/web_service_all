@@ -21,6 +21,7 @@ class ScriptsViewSet(viewsets.GenericViewSet):
     list_serializer_class = ScriptSqlServerSerializer
     queryset = None
 
+
     # Configura tu conexión a SQL Server
     def extract_sql_from_rpt(self, rpt_path: str):
         """Extrae la consulta SQL de un archivo .rpt de Crystal Reports y asigna automáticamente los parámetros según la fecha actual."""
@@ -58,35 +59,91 @@ class ScriptsViewSet(viewsets.GenericViewSet):
 
             # Extraer el SQL del reporte sin mostrar ventanas de parámetros
             sql_query = rpt.SQLQueryString
+            if not sql_query:
+                CustomException.throw("No se encontró SQL en el reporte.")
 
             pythoncom.CoUninitialize()
             print("====================================================================================================")
-
-            return [sql_query] if sql_query else ["No se encontró SQL en el reporte"]
+            
+            return [sql_query] if sql_query else []
         except Exception as e:
             pythoncom.CoUninitialize()
             raise e
 
 
-
     def execute_sql(self, sql: str):
-        """Ejecuta una consulta SQL y devuelve los resultados."""
+        """Ejecuta una consulta SQL y devuelve solo el primer registro."""
         try:
-            print("Ejecuta la consulta a la DB en Sql Server")
-            print("====================================================================================================")
-            print("sql: ",sql)
-            with pyodbc.connect(settings.DB_CONN_STRING) as conn:
-                cursor = conn.cursor()
-                cursor.execute(sql)
-                columns = [col[0] for col in cursor.description] if cursor.description else []
+            print("Ejecución de una consulta SQL en SQL Server")
+            print("====================================================================================================")   
+
+            sql_original = sql.strip()  
+
+            #Si la consulta comienza con SELECT, agregamos TOP 1
+            if re.match(r'(?i)^select', sql_original):
+                # Evitar duplicar TOP si ya existe
+                if not re.search(r'(?i)\btop\s+\d+', sql_original):
+                    # Manejar el caso de SELECT DISTINCT
+                    if re.match(r'(?i)^select\s+distinct', sql_original):
+                        sql_modified = re.sub(r'(?i)^select\s+distinct', 'SELECT DISTINCT TOP 1', sql_original)
+                    else:
+                        sql_modified = re.sub(r'(?i)^select', 'SELECT TOP 1', sql_original)
+                else:
+                    sql_modified = sql_original  # Ya tiene TOP definido
+            else:
+                sql_modified = sql_original  # No es SELECT, no se modifica 
+
+            print(sql_modified)
+            # Ejecutar la consulta modificada
+            with pyodbc.connect(settings.DB_CONN_STRING) as connection:
+                cursor = connection.cursor()
+                cursor.execute(sql_modified)
+                columns = [column[0] for column in cursor.description] if cursor.description else []
                 results = cursor.fetchall()
+                data = [dict(zip(columns, row)) for row in results] if columns else []  
+
+            print(f"registros totales devueltos {len(data)}")
+            print("====================================================================================================")
+            return data 
+        except Exception as e:
+            raise e
+
+
+    def list_arslmfil_sql_server(self):
+        """
+            Ejecuta una consulta SQL en SQL Server 
+            para obtener los tipos de contrato.
+        """
+        try:
+            print("Ejecutando consulta SQL para listar tipos de contrato")
+            print("====================================================================================================")
+
+            # Consulta SQL a ejecutar
+            sql_query = """
+                SELECT tc.tipo, tc.descripcion 
+                FROM arslmfil_sql ar
+                INNER JOIN TIPOCONTRATOMEICO_SQL tc ON ar.phone_ext_2 = tc.tipo
+                GROUP BY tc.tipo, tc.descripcion
+            """
+
+            # Conectar a la base de datos SQL Server usando cadena desde settings
+            with pyodbc.connect(settings.DB_CONN_STRING) as connection:
+                cursor = connection.cursor()
+
+                # Ejecutar la consulta
+                cursor.execute(sql_query)
+                columns = [column[0] for column in cursor.description] if cursor.description else []
+                results = cursor.fetchall()
+
+                # Convertir resultados en una lista de diccionarios
                 data = [dict(zip(columns, row)) for row in results] if columns else []
-            
-            print("Retornamos las repuesta las vistas")
+
+            print(f"Registros totales devueltos: {len(data)}")
             print("====================================================================================================")
             return data
+
         except Exception as e:
-           raise e
+            raise e
 
 
     @action(methods=['POST'], detail=False, url_path="extract-sql-folder")
@@ -105,14 +162,19 @@ class ScriptsViewSet(viewsets.GenericViewSet):
                     for fname in filenames:
                         if fname.lower().endswith(".rpt"):
                             rpt_files.append(os.path.join(dirpath, fname))
-
+                            
+                #Ejecutamos la consulta contra el reporte .rpt
+                query_server = self.list_arslmfil_sql_server()
                 all_sql_results = {}
                 for rpt_file in rpt_files:
+                    # Extraemos las vista los archivos .rpt
                     sql_queries = self.extract_sql_from_rpt(rpt_file)
                     if sql_queries:
                         sql_execution_results = []
                         for sql in sql_queries:
+                            # Ejecutamos la vista de los archivos .rpt
                             exec_result = self.execute_sql(sql)
+                            print("query_server: ",query_server)
                             sql_execution_results.append({
                                 "sql": sql,
                                 "result": exec_result
@@ -122,7 +184,7 @@ class ScriptsViewSet(viewsets.GenericViewSet):
                 raise Exception(formatErrors(serializer.errors))
             
             return FormatResponse.successful(
-                message=f"Procesado {len(rpt_files)} .rpt archivo",
+                message=f"Se procesaron {len(rpt_files)} .rpt archivos",
                 data=all_sql_results
             )
         except Exception as e:
