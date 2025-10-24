@@ -102,6 +102,14 @@ DB_PASSWORD_SQL_SERVER = env('DB_PASSWORD_SQL_SERVER')
 DB_HOST_SQL_SERVER = env('DB_HOST_SQL_SERVER')
 DB_PORT_SQL_SERVER = env('DB_PORT_SQL_SERVER', default='1433')
 
+DB_CONN_STRING = (
+    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+    f"SERVER={DB_HOST_SQL_SERVER},{DB_PORT_SQL_SERVER};"
+    f"DATABASE={DB_NAME_SQL_SERVER};"
+    f"UID={DB_USER_SQL_SERVER};"
+    f"PWD={DB_PASSWORD_SQL_SERVER};"
+)
+    
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 

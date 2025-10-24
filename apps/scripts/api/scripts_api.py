@@ -4,6 +4,7 @@ import pyodbc  # Asegúrate de tener pyodbc instalado
 import pythoncom
 import win32com.client
 from django.conf import settings
+from datetime import datetime   
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from apps.base.extensions.helpers.custom_exception import CustomException
@@ -20,28 +21,24 @@ class ScriptsViewSet(viewsets.GenericViewSet):
     queryset = None
 
     # Configura tu conexión a SQL Server
-    DB_CONN_STRING = (
-        f"DRIVER={{SQL Server}};"
-        f"SERVER={settings.DB_HOST_SQL_SERVER},{settings.DB_PORT_SQL_SERVER};"
-        f"DATABASE={settings.DB_NAME_SQL_SERVER};"
-        f"UID={settings.DB_USER_SQL_SERVER};"
-        f"PWD={settings.DB_PASSWORD_SQL_SERVER}"
-    )
+
     print("DB_NAME_SQL_SERVER: ", settings.DB_NAME_SQL_SERVER)
     print("DB_USER_SQL_SERVER: ", settings.DB_USER_SQL_SERVER)
     print("DB_PASSWORD_SQL_SERVER: ", settings.DB_PASSWORD_SQL_SERVER)
     print("DB_HOST_SQL_SERVER: ", settings.DB_HOST_SQL_SERVER)
     print("DB_PORT_SQL_SERVER: ", settings.DB_PORT_SQL_SERVER)
-    print("DB_CONN_STRING: ", DB_CONN_STRING)
+    print("DB_PORT_SQL_SERVER: ", settings.DB_CONN_STRING)
     
     def extract_sql_from_rpt(self, rpt_path: str):
         """Extracts SQL queries from a .rpt file using Crystal Reports Runtime """
         try:
+            print("Inicio la conexion con CrystalRuntime")
             pythoncom.CoInitialize()
             cr_app = win32com.client.Dispatch("CrystalRuntime.Application")
             rpt = cr_app.OpenReport(rpt_path)
             sql_query = rpt.SQLQueryString
             pythoncom.CoUninitialize()
+            print("====================================================================================================")
             return [sql_query] if sql_query else ["No se encontró SQL en el informe"]
         except Exception as e:
            raise e
@@ -50,14 +47,19 @@ class ScriptsViewSet(viewsets.GenericViewSet):
     def execute_sql(self, sql: str):
         """Ejecuta una consulta SQL y devuelve los resultados."""
         try:
+            print("Ejecuta la consulta a la DB en Sql Server")
+            print("====================================================================================================")
             print("sql: ",sql)
-            with pyodbc.connect(self.DB_CONN_STRING) as conn:
+            with pyodbc.connect(settings.DB_CONN_STRING) as conn:
                 cursor = conn.cursor()
                 cursor.execute(sql)
                 columns = [col[0] for col in cursor.description] if cursor.description else []
                 results = cursor.fetchall()
                 data = [dict(zip(columns, row)) for row in results] if columns else []
-                return FormatResponse.successful(message=f"Poceso exitoso",data=data)
+            
+            print("Retornamos las repuesta las vistas")
+            print("====================================================================================================")
+            return data
         except Exception as e:
            raise e
 
@@ -90,7 +92,7 @@ class ScriptsViewSet(viewsets.GenericViewSet):
                                 "sql": sql,
                                 "result": exec_result
                             })
-                        all_sql_results[rpt_file] = sql_execution_results
+                        all_sql_results = sql_execution_results
             else:
                 raise Exception(formatErrors(serializer.errors))
             
