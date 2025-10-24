@@ -3,16 +3,17 @@ import re
 import pyodbc 
 import pythoncom
 import win32com.client
+import calendar as cal 
 from django.conf import settings
 from datetime import date
-import calendar as cal 
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from apps.base.extensions.helpers.custom_exception import CustomException
+from apps.base.reports.excel.download_extract_sql_server_template import download_extract_sql_server_template
+from apps.base.utils import formatErrors
 from apps.scripts.api.serializers.scripts_serializers import ScriptSqlServerSerializer
 from apps.base.extensions.custom_pagination.custom_pagination import BasicPagination
-from apps.base.extensions.helpers.format_response import FormatResponse
-from apps.base.extensions.utils import formatErrors
+from apps.base.helpers.format_response import FormatResponse
+from apps.base.helpers.custom_exception import CustomException
 
 class ScriptsViewSet(viewsets.GenericViewSet):
     model = None
@@ -220,13 +221,14 @@ class ScriptsViewSet(viewsets.GenericViewSet):
                         # Guardamos los resultados por cada archivo
                         all_sql_results[rpt_file] = sql_execution_results
                     else:
-                        raise Exception(f"No se encontraron consultas SQL en el archivo {rpt_file}")
+                        CustomException.throw(f"No se encontraron consultas SQL en el archivo {rpt_file}")
 
             else:
                 raise Exception(formatErrors(serializer.errors))
-            return FormatResponse.successful(
-                message=f"Se procesaron {len(rpt_files)} archivos .rpt correctamente",
-                data=all_sql_results
-            )
+            return download_extract_sql_server_template(all_sql_results)
+            #return FormatResponse.successful(
+            #    message=f"Se procesaron {len(rpt_files)} archivos .rpt correctamente",
+            #    data=all_sql_results
+            #)
         except Exception as e:
             return FormatResponse.failed(e)
