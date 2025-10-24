@@ -1,6 +1,6 @@
 import os
 import re
-import pyodbc  # Asegúrate de tener pyodbc instalado
+import pyodbc 
 import pythoncom
 import win32com.client
 from django.conf import settings
@@ -151,40 +151,81 @@ class ScriptsViewSet(viewsets.GenericViewSet):
         """
             Itera a través de una carpeta de archivos .rpt, 
             extrae consultas SQL y ejecuta cada consulta para 
-            devolver los resultados.
+            devolver los resultados validados.
         """
         try:
             folder_path = request.data.get("path")
             serializer = self.serializer_class(data=request.data)
             if serializer.is_valid():
                 rpt_files = []
+
+                # Buscamos todos los archivos .rpt en la carpeta indicada
                 for dirpath, _, filenames in os.walk(folder_path):
                     for fname in filenames:
                         if fname.lower().endswith(".rpt"):
                             rpt_files.append(os.path.join(dirpath, fname))
-                            
-                #Ejecutamos la consulta contra el reporte .rpt
-                query_server = self.list_arslmfil_sql_server()
+
+                # Obtenemos los tipos válidos desde SQL Server (usando ORM)
+                valid_contract_types = self.list_arslmfil_sql_server()
+                valid_types = {item["tipo"]: item["descripcion"] for item in valid_contract_types}
+
                 all_sql_results = {}
+
                 for rpt_file in rpt_files:
-                    # Extraemos las vista los archivos .rpt
+                    # Extraemos las consultas SQL desde el archivo .rpt
                     sql_queries = self.extract_sql_from_rpt(rpt_file)
                     if sql_queries:
                         sql_execution_results = []
+
                         for sql in sql_queries:
-                            # Ejecutamos la vista de los archivos .rpt
+                            # Ejecutamos la consulta SQL de la vista
                             exec_result = self.execute_sql(sql)
-                            print("query_server: ",query_server)
+
+                            # Inicializamos valores por defecto
+                            type_rpt_value = None
+                            descripcion_value = None
+                            exists_flag = False
+
+                            # Validamos que el resultado tenga registros
+                            if exec_result and isinstance(exec_result, list):
+                                first_row = exec_result[0]
+
+                                # Obtenemos el valor del campo TIPO (mayúsculas o minúsculas)
+                                type_rpt_value = first_row.get("TIPO") or first_row.get("tipo")
+
+                                # Validamos si el tipo existe en los tipos válidos
+                                if type_rpt_value:
+                                    if type_rpt_value in valid_types:
+                                        descripcion_value = valid_types[type_rpt_value]
+                                        exists_flag = True
+                                    else:
+                                        descripcion_value = "Tipo no encontrado en base de datos"
+                                        exists_flag = False
+                                else:
+                                    descripcion_value = "Campo 'TIPO' no presente en el resultado"
+                                    exists_flag = False
+                            else:
+                                descripcion_value = "Sin registros devueltos por la consulta"
+                                exists_flag = False
+
+                            # Agregamos la información formateada del archivo
                             sql_execution_results.append({
-                                "sql": sql,
-                                "result": exec_result
+                                "file_route": str(rpt_file),
+                                "file_name": os.path.basename(rpt_file),
+                                "descripcion_query": descripcion_value,
+                                "type": type_rpt_value,
+                                "exist": exists_flag
                             })
+
+                        # Guardamos los resultados por cada archivo
                         all_sql_results[rpt_file] = sql_execution_results
+                    else:
+                        raise Exception(f"No se encontraron consultas SQL en el archivo {rpt_file}")
+
             else:
                 raise Exception(formatErrors(serializer.errors))
-            
             return FormatResponse.successful(
-                message=f"Se procesaron {len(rpt_files)} .rpt archivos",
+                message=f"Se procesaron {len(rpt_files)} archivos .rpt correctamente",
                 data=all_sql_results
             )
         except Exception as e:
