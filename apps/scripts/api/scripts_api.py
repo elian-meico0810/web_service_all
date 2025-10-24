@@ -4,7 +4,8 @@ import pyodbc  # Asegúrate de tener pyodbc instalado
 import pythoncom
 import win32com.client
 from django.conf import settings
-from datetime import datetime   
+from datetime import date
+import calendar as cal 
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from apps.base.extensions.helpers.custom_exception import CustomException
@@ -21,27 +22,51 @@ class ScriptsViewSet(viewsets.GenericViewSet):
     queryset = None
 
     # Configura tu conexión a SQL Server
-
-    print("DB_NAME_SQL_SERVER: ", settings.DB_NAME_SQL_SERVER)
-    print("DB_USER_SQL_SERVER: ", settings.DB_USER_SQL_SERVER)
-    print("DB_PASSWORD_SQL_SERVER: ", settings.DB_PASSWORD_SQL_SERVER)
-    print("DB_HOST_SQL_SERVER: ", settings.DB_HOST_SQL_SERVER)
-    print("DB_PORT_SQL_SERVER: ", settings.DB_PORT_SQL_SERVER)
-    print("DB_PORT_SQL_SERVER: ", settings.DB_CONN_STRING)
-    
     def extract_sql_from_rpt(self, rpt_path: str):
-        """Extracts SQL queries from a .rpt file using Crystal Reports Runtime """
+        """Extrae la consulta SQL de un archivo .rpt de Crystal Reports y asigna automáticamente los parámetros según la fecha actual."""
         try:
-            print("Inicio la conexion con CrystalRuntime")
+            print("Iniciando conexión con CrystalRuntime...")
             pythoncom.CoInitialize()
             cr_app = win32com.client.Dispatch("CrystalRuntime.Application")
             rpt = cr_app.OpenReport(rpt_path)
+
+            # Obtener información de la fecha actual
+            today = date.today()
+            year = today.year
+            month = today.month
+            _, last_day = cal.monthrange(year, month)
+            start_date = date(2024, 12, 1).strftime("%Y-%m-%d") # year, month, 1
+            end_date = date(2024, 12, 31).strftime("%Y-%m-%d") # year, month, last_day
+
+            # Asignar valores automáticos a los parámetros del reporte
+            for param_field in rpt.ParameterFields:
+                name = param_field.ParameterFieldName.lower()
+
+                # Condiciones según los nombres reales de tus parámetros en español
+                if "año" in name or "ano" in name:
+                    param_field.AddCurrentValue(2024)
+                elif "periodo" in name:
+                    param_field.AddCurrentValue(12)
+                elif "fecini" in name:
+                    param_field.AddCurrentValue(start_date)
+                elif "fechfin" in name:
+                    param_field.AddCurrentValue(end_date)
+                else:
+                    # Si aparece algún otro parámetro no esperado, se asigna vacío
+                    print(f"⚠ Parámetro '{name}' no reconocido, asignando valor vacío")
+                    param_field.AddCurrentValue("")
+
+            # Extraer el SQL del reporte sin mostrar ventanas de parámetros
             sql_query = rpt.SQLQueryString
+
             pythoncom.CoUninitialize()
             print("====================================================================================================")
-            return [sql_query] if sql_query else ["No se encontró SQL en el informe"]
+
+            return [sql_query] if sql_query else ["No se encontró SQL en el reporte"]
         except Exception as e:
-           raise e
+            pythoncom.CoUninitialize()
+            raise e
+
 
 
     def execute_sql(self, sql: str):
@@ -92,7 +117,7 @@ class ScriptsViewSet(viewsets.GenericViewSet):
                                 "sql": sql,
                                 "result": exec_result
                             })
-                        all_sql_results = sql_execution_results
+                        all_sql_results[rpt_file] = sql_execution_results
             else:
                 raise Exception(formatErrors(serializer.errors))
             
