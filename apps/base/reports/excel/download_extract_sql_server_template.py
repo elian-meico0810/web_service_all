@@ -19,7 +19,7 @@ def download_extract_sql_server_template(all_sql_results):
         ws.title = 'report'
 
         # Columnas de la plantilla
-        columns = ['Nombre del archivo', 'Ruta', 'Tipo', 'Descripción', 'Existe']
+        columns = ['Nombre del archivo', 'Ruta', 'Base de datos', 'Query', 'Tipo', 'Descripción', 'Existe']
 
         # Encabezado azul oscuro con letra blanca
         header_font = Font(name='Calibri', size=14, bold=True, color='FFFFFFFF')
@@ -37,9 +37,11 @@ def download_extract_sql_server_template(all_sql_results):
             for item in results:
                 ws.cell(row=row_idx, column=1, value=item.get('file_name'))
                 ws.cell(row=row_idx, column=2, value=item.get('file_route'))
-                ws.cell(row=row_idx, column=3, value=item.get('type'))
-                ws.cell(row=row_idx, column=4, value=item.get('descripcion_query'))
-                ws.cell(row=row_idx, column=5, value=item.get('exist'))
+                ws.cell(row=row_idx, column=3, value=item.get('db_name'))
+                ws.cell(row=row_idx, column=4, value=item.get('sql'))
+                ws.cell(row=row_idx, column=5, value=item.get('type'))
+                ws.cell(row=row_idx, column=6, value=item.get('descripcion_query'))
+                ws.cell(row=row_idx, column=7, value=item.get('exist'))
                 row_idx += 1
 
         # Guardar y enviar

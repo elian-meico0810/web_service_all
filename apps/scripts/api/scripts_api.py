@@ -22,7 +22,7 @@ class ScriptsViewSet(viewsets.GenericViewSet):
     list_serializer_class = ScriptSqlServerSerializer
     queryset = None
 
-
+        
     # Configura tu conexión a SQL Server
     def extract_sql_from_rpt(self, rpt_path: str):
         """
@@ -35,7 +35,11 @@ class ScriptsViewSet(viewsets.GenericViewSet):
             pythoncom.CoInitialize()
             cr_app = win32com.client.Dispatch("CrystalRuntime.Application")
             rpt = cr_app.OpenReport(rpt_path)
-
+            for table in rpt.Database.Tables:
+                print("Tabla:", table.Name, "-", table.Location)
+                location = table.Location.strip()  # por si hay espacios
+                db_name = location.split('.')[0]   # tomar lo que está antes del primer punto
+                print("Nombre de la base de datos:", db_name)
             # Obtener información de la fecha actual
             today = date.today()
             year = today.year
@@ -70,13 +74,13 @@ class ScriptsViewSet(viewsets.GenericViewSet):
             pythoncom.CoUninitialize()
             print("====================================================================================================")
             
-            return [sql_query] if sql_query else []
+            return {"sql_query": sql_query, "db_name": db_name} if sql_query and db_name else []
         except Exception as e:
             pythoncom.CoUninitialize()
             raise e
 
 
-    def execute_sql(self, sql: str):
+    def execute_sql(self, sql: str, db_name:  str = None):
         """Ejecuta una consulta SQL y devuelve solo el primer registro."""
         try:
             print("Ejecución de una consulta SQL en SQL Server")
@@ -99,8 +103,13 @@ class ScriptsViewSet(viewsets.GenericViewSet):
                 sql_modified = sql_original  # No es SELECT, no se modifica 
 
             print(sql_modified)
+            conn_str = settings.DB_CONN_STRING
+            if db_name:
+            # Reemplaza el valor de DATABASE en la cadena de conexión
+                conn_str = re.sub(r"(DATABASE\s*=\s*)([^;]+)", fr"\1{db_name}", conn_str, flags=re.IGNORECASE)
+
             # Ejecutar la consulta modificada
-            with pyodbc.connect(settings.DB_CONN_STRING) as connection:
+            with pyodbc.connect(conn_str) as connection:
                 cursor = connection.cursor()
                 cursor.execute(sql_modified)
                 columns = [column[0] for column in cursor.description] if cursor.description else []
@@ -178,49 +187,46 @@ class ScriptsViewSet(viewsets.GenericViewSet):
 
                 for rpt_file in rpt_files:
                     # Extraemos las consultas SQL desde el archivo .rpt
-                    sql_queries = self.extract_sql_from_rpt(rpt_file)
-                    if sql_queries:
+                    result = self.extract_sql_from_rpt(rpt_file)
+                    sql_query  = result.get("sql_query")
+                    db_name = result.get("db_name", None) 
+                    if sql_query:
                         sql_execution_results = []
 
-                        for sql in sql_queries:
-                            # Ejecutamos la consulta SQL de la vista
-                            exec_result = self.execute_sql(sql)
-
-                            # Inicializamos valores por defecto
-                            type_rpt_value = None
-                            descripcion_value = None
-                            exists_flag = False
-
-                            # Validamos que el resultado tenga registros
-                            if exec_result and isinstance(exec_result, list):
-                                first_row = exec_result[0]
-
-                                # Obtenemos el valor del campo TIPO (mayúsculas o minúsculas)
-                                type_rpt_value = first_row.get("TIPO") or first_row.get("tipo")
-
-                                # Validamos si el tipo existe en los tipos válidos
-                                if type_rpt_value:
-                                    if type_rpt_value in valid_types:
-                                        descripcion_value = valid_types[type_rpt_value]
-                                        exists_flag = True
-                                    else:
-                                        descripcion_value = "Tipo no encontrado en base de datos"
-                                        exists_flag = False
+                        exec_result = self.execute_sql(sql_query, db_name)
+                        # Inicializamos valores por defecto
+                        type_rpt_value = None
+                        descripcion_value = None
+                        exists_flag = False
+                        # Validamos que el resultado tenga registros
+                        if exec_result and isinstance(exec_result, list):
+                            first_row = exec_result[0]
+                            # Obtenemos el valor del campo TIPO (mayúsculas o minúsculas)
+                            type_rpt_value = first_row.get("TIPO") or first_row.get("tipo")
+                            # Validamos si el tipo existe en los tipos válidos
+                            if type_rpt_value:
+                                if type_rpt_value in valid_types:
+                                    descripcion_value = valid_types[type_rpt_value]
+                                    exists_flag = True
                                 else:
-                                    descripcion_value = "Campo 'TIPO' no presente en el resultado"
+                                    descripcion_value = "Tipo no encontrado en base de datos"
                                     exists_flag = False
                             else:
-                                descripcion_value = "Sin registros devueltos por la consulta"
+                                descripcion_value = "Campo 'TIPO' no presente en el resultado"
                                 exists_flag = False
-
-                            # Agregamos la información formateada del archivo
-                            sql_execution_results.append({
-                                "file_route": str(rpt_file),
-                                "file_name": os.path.basename(rpt_file),
-                                "descripcion_query": descripcion_value,
-                                "type": type_rpt_value,
-                                "exist": exists_flag
-                            })
+                        else:
+                            descripcion_value = "Sin registros devueltos por la consulta"
+                            exists_flag = False
+                        # Agregamos la información formateada del archivo
+                        sql_execution_results.append({
+                            "file_route": str(rpt_file),
+                            "db_name": str(db_name),
+                            "sql": str(sql_query),
+                            "file_name": os.path.basename(rpt_file),
+                            "descripcion_query": descripcion_value,
+                            "type": type_rpt_value,
+                            "exist": exists_flag
+                        })
 
                         # Guardamos los resultados por cada archivo
                         all_sql_results[rpt_file] = sql_execution_results
