@@ -36,10 +36,8 @@ class ScriptsViewSet(viewsets.GenericViewSet):
             cr_app = win32com.client.Dispatch("CrystalRuntime.Application")
             rpt = cr_app.OpenReport(rpt_path)
             for table in rpt.Database.Tables:
-                print("Tabla:", table.Name, "-", table.Location)
                 location = table.Location.strip()  # por si hay espacios
                 db_name = location.split('.')[0]   # tomar lo que está antes del primer punto
-                print("Nombre de la base de datos:", db_name)
             # Obtener información de la fecha actual
             today = date.today()
             year = today.year
