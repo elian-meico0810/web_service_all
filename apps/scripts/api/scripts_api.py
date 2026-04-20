@@ -5,7 +5,8 @@ import pythoncom
 import win32com.client
 import calendar as cal 
 from django.conf import settings
-from datetime import date
+from datetime import date, datetime
+import pywintypes
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from apps.base.utils import formatErrors
@@ -14,6 +15,7 @@ from apps.base.helpers.custom_exception import CustomException
 from apps.scripts.api.serializers.scripts_serializers import ScriptSqlServerSerializer
 from apps.base.extensions.custom_pagination.custom_pagination import BasicPagination
 from apps.base.reports.excel.download_extract_sql_server_template import download_extract_sql_server_template
+import calendar
 
 class ScriptsViewSet(viewsets.GenericViewSet):
     model = None
@@ -24,59 +26,102 @@ class ScriptsViewSet(viewsets.GenericViewSet):
 
         
     # Configura tu conexión a SQL Server
-    def extract_sql_from_rpt(self, rpt_path: str):
-        """
-            Extrae la consulta SQL de un archivo .rpt 
-            de Crystal Reports y asigna automáticamente 
-            los parámetros según la fecha actual.
-        """
+    def normalize_param_name(self, name: str):
+        name = name.lower()
+        name = name.replace("@", "")
+        name = name.replace("ñ", "n") 
+        name = name.replace("-", "")
+        name = re.sub(r'[^a-z0-9]', '', name)
+        return name
+
+    def extract_sql_from_rpt(self, rpt_path: str, params: dict = None):
         try:
-            print("Iniciando conexión con CrystalRuntime...")
             pythoncom.CoInitialize()
             cr_app = win32com.client.Dispatch("CrystalRuntime.Application")
-            rpt = cr_app.OpenReport(rpt_path)
-            for table in rpt.Database.Tables:
-                location = table.Location.strip()  # por si hay espacios
-                db_name = location.split('.')[0]   # tomar lo que está antes del primer punto
-            # Obtener información de la fecha actual
-            today = date.today()
-            year = today.year
-            month = today.month
-            _, last_day = cal.monthrange(year, month)
-            start_date = date(2024, 12, 1).strftime("%Y-%m-%d") # year, month, 1
-            end_date = date(2024, 12, 31).strftime("%Y-%m-%d") # year, month, last_day
-
-            # Asignar valores automáticos a los parámetros del reporte
-            for param_field in rpt.ParameterFields:
-                name = param_field.ParameterFieldName.lower()
-
-                # Condiciones según los nombres reales de tus parámetros en español
-                if "año" in name or "ano" in name:
-                    param_field.AddCurrentValue(2024)
-                elif "periodo" in name:
-                    param_field.AddCurrentValue(12)
-                elif "fecini" in name:
-                    param_field.AddCurrentValue(start_date)
-                elif "fechfin" in name:
-                    param_field.AddCurrentValue(end_date)
-                else:
-                    # Si aparece algún otro parámetro no esperado, se asigna vacío
-                    print(f"⚠ Parámetro '{name}' no reconocido, asignando valor vacío")
-                    param_field.AddCurrentValue("")
-
-            # Extraer el SQL del reporte sin mostrar ventanas de parámetros
-            sql_query = rpt.SQLQueryString
-            if not sql_query:
-                CustomException.throw("No se encontró SQL en el reporte.")
-
-            pythoncom.CoUninitialize()
-            print("====================================================================================================")
             
-            return {"sql_query": sql_query, "db_name": db_name} if sql_query and db_name else []
+            rpt = cr_app.OpenReport(rpt_path)
+            
+            # DB
+            db_name = None
+            for table in rpt.Database.Tables:
+                location = table.Location.strip()
+                db_name = location.split('.')[0]
+            
+            # Params seguros
+            today = date.today()
+            
+            year = int(params.get("year", today.year))
+            month = int(params.get("month", today.month))
+            day = int(params.get("day", today.day))
+            
+            _, last_day = cal.monthrange(year, month)
+            
+            start_date = pywintypes.Time(datetime(year, month, day, 0, 0, 0))
+            end_date = pywintypes.Time(datetime(year, month, last_day, 23, 59, 59))
+            
+            print( year, month, day, start_date, end_date)
+            
+            # Deshabilitar prompting
+            rpt.EnableParameterPrompting = False
+            
+            # Intentar asignar TODOS los parámetros de forma genérica
+            for param_field in rpt.ParameterFields:
+                raw_name = param_field.ParameterFieldName
+                name = self.normalize_param_name(raw_name)
+                
+                print(f"PARAM: {raw_name}")
+                
+                try:
+                    param_field.ClearCurrentValueAndRange()
+                    
+                    # Diccionario de valores por defecto según patrones
+                    default_values = {
+                        'ano': year, 'year': year, 'anio': year,
+                        'mes': month, 'month': month,
+                        'dia': day, 'day': day,
+                        'fecini': start_date,
+                        'fecfin': end_date,
+                        'division': '1',
+                        'periodo': f"{year}{month:02d}",
+                    }
+                    
+                    # Buscar si el nombre del parámetro coincide con alguna clave
+                    assigned = False
+                    for key, value in default_values.items():
+                        if key in name:
+                            param_field.AddCurrentValue(value)
+                            assigned = True
+                            print(f"Asignado: {key} = {value}")
+                            break
+                    
+                    if not assigned:
+                        # Si no coincide con nada, asignar según el tipo
+                        value_type = param_field.ValueType
+                        if value_type == 7:  # Fecha
+                            param_field.AddCurrentValue(start_date)
+                        elif value_type == 12:  # String
+                            param_field.AddCurrentValue("")
+                        else:  # Número
+                            param_field.AddCurrentValue(0)
+                        print(f"  ⚠ Asignado valor por defecto (type={value_type})")
+                        
+                except Exception as e:
+                    print(f" ⚠ Error (ignorado): {e}")
+                    continue
+            
+            # Obtener SQL - esto es lo único que nos importa
+            sql_query = rpt.SQLQueryString
+            
+            if not sql_query:
+                raise Exception(f"No se encontró SQL en {rpt_path}")
+            
+            print(f" SQL extraído exitosamente")
+            
+            return {"sql_query": sql_query, "db_name": db_name}
+            
         except Exception as e:
-            pythoncom.CoUninitialize()
-            raise e
-
+            print(f"Error en extract_sql_from_rpt: {e}")
+            raise
 
     def execute_sql(self, sql: str, db_name:  str = None):
         """Ejecuta una consulta SQL y devuelve solo el primer registro."""
@@ -157,86 +202,56 @@ class ScriptsViewSet(viewsets.GenericViewSet):
         except Exception as e:
             raise e
 
-
     @action(methods=['POST'], detail=False, url_path="extract-sql-folder")
     def extract_sql_from_folder(self, request, *args, **kwargs):
-        """
-            Itera a través de una carpeta de archivos .rpt, 
-            extrae consultas SQL y ejecuta cada consulta para 
-            devolver los resultados validados.
-        """
         try:
-            folder_path = request.data.get("path")
             serializer = self.serializer_class(data=request.data)
-            if serializer.is_valid():
-                rpt_files = []
+            serializer.is_valid(raise_exception=True)
 
-                # Buscamos todos los archivos .rpt en la carpeta indicada
-                for dirpath, _, filenames in os.walk(folder_path):
-                    for fname in filenames:
-                        if fname.lower().endswith(".rpt"):
-                            rpt_files.append(os.path.join(dirpath, fname))
+            folder_path = serializer.validated_data.get("path")
 
-                # Obtenemos los tipos válidos desde SQL Server (usando ORM)
-                valid_contract_types = self.list_arslmfil_sql_server()
-                valid_types = {item["tipo"]: item["descripcion"] for item in valid_contract_types}
+            rpt_files = [
+                os.path.join(dirpath, fname)
+                for dirpath, _, filenames in os.walk(folder_path)
+                for fname in filenames
+                if fname.lower().endswith(".rpt")
+            ]
 
-                all_sql_results = {}
+            all_sql_results = {}
 
-                for rpt_file in rpt_files:
-                    # Extraemos las consultas SQL desde el archivo .rpt
-                    result = self.extract_sql_from_rpt(rpt_file)
-                    sql_query  = result.get("sql_query")
-                    db_name = result.get("db_name", None) 
-                    if sql_query:
-                        sql_execution_results = []
+            for rpt_file in rpt_files:
+                try:
+                    result = self.extract_sql_from_rpt(rpt_file, serializer.validated_data)
 
-                        exec_result = self.execute_sql(sql_query, db_name)
-                        # Inicializamos valores por defecto
-                        type_rpt_value = None
-                        descripcion_value = None
-                        exists_flag = False
-                        # Validamos que el resultado tenga registros
-                        if exec_result and isinstance(exec_result, list):
-                            first_row = exec_result[0]
-                            # Obtenemos el valor del campo TIPO (mayúsculas o minúsculas)
-                            type_rpt_value = first_row.get("TIPO") or first_row.get("tipo")
-                            # Validamos si el tipo existe en los tipos válidos
-                            if type_rpt_value:
-                                if type_rpt_value in valid_types:
-                                    descripcion_value = valid_types[type_rpt_value]
-                                    exists_flag = True
-                                else:
-                                    descripcion_value = "Tipo no encontrado en base de datos"
-                                    exists_flag = False
-                            else:
-                                descripcion_value = "Campo 'TIPO' no presente en el resultado"
-                                exists_flag = False
-                        else:
-                            descripcion_value = "Sin registros devueltos por la consulta"
-                            exists_flag = False
-                        # Agregamos la información formateada del archivo
-                        sql_execution_results.append({
-                            "file_route": str(rpt_file),
-                            "db_name": str(db_name),
-                            "sql": str(sql_query),
-                            "file_name": os.path.basename(rpt_file),
-                            "descripcion_query": descripcion_value,
-                            "type": type_rpt_value,
-                            "exist": exists_flag
-                        })
+                    sql_query = result.get("sql_query")
+                    db_name = result.get("db_name")
 
-                        # Guardamos los resultados por cada archivo
-                        all_sql_results[rpt_file] = sql_execution_results
-                    else:
-                        CustomException.throw(f"No se encontraron consultas SQL en el archivo {rpt_file}")
+                    print("sql_query: ",sql_query)
+                    print("db_name: ",db_name)
+                    
+                    if not sql_query:
+                        raise Exception("No se encontró SQL en el archivo")
 
-            else:
-                raise Exception(formatErrors(serializer.errors))
-            return download_extract_sql_server_template(all_sql_results)
-            #return FormatResponse.successful(
-            #    message=f"Se procesaron {len(rpt_files)} archivos .rpt correctamente",
-            #    data=all_sql_results
-            #)
+                    all_sql_results[rpt_file] = [{
+                        "file_route": str(rpt_file),
+                        "db_name": str(db_name),
+                        "sql": str(sql_query),
+                        "file_name": os.path.basename(rpt_file),
+                        "descripcion_query": "Consulta extraída con éxito."                      
+                    }]
+
+                except Exception as e:
+                    # guardar error y continuar
+                    all_sql_results[rpt_file] = [{
+                        "file_route": str(rpt_file),
+                        "db_name": "",
+                        "sql": "",
+                        "file_name": os.path.basename(rpt_file),
+                        "descripcion_query": f"ERROR: {str(e)}",
+                    }]
+                    continue  # sigue con el siguiente archivo
+            result = download_extract_sql_server_template(all_sql_results)
+            print(type(result), result)
+            return result
         except Exception as e:
             return FormatResponse.failed(e)
