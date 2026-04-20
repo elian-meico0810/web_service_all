@@ -27,12 +27,31 @@ class ScriptsViewSet(viewsets.GenericViewSet):
         
     # Configura tu conexión a SQL Server
     def normalize_param_name(self, name: str):
-        name = name.lower()
-        name = name.replace("@", "")
-        name = name.replace("ñ", "n") 
-        name = name.replace("-", "")
-        name = re.sub(r'[^a-z0-9]', '', name)
-        return name
+        try:
+            name = name.lower()
+            name = name.replace("@", "")
+            name = name.replace("ñ", "n") 
+            name = name.replace("-", "")
+            name = re.sub(r'[^a-z0-9]', '', name)
+            return name
+        except Exception as e:
+            raise e
+
+
+
+    def extract_tables_from_sql(self, sql: str):
+        try:
+            matches = re.findall(r'([A-Za-z0-9_]+\.[A-Za-z0-9_"]+)', sql)
+
+            tables = set()
+
+            for match in matches:
+                table = match.split('.')[0]
+                tables.add(table.strip())
+
+            return sorted(tables) 
+        except Exception as e:
+            raise e
 
     def extract_sql_from_rpt(self, rpt_path: str, params: dict = None):
         try:
@@ -225,21 +244,26 @@ class ScriptsViewSet(viewsets.GenericViewSet):
 
                     sql_query = result.get("sql_query")
                     db_name = result.get("db_name")
-
+                    tables = self.extract_tables_from_sql(sql_query)
                     print("sql_query: ",sql_query)
                     print("db_name: ",db_name)
                     
                     if not sql_query:
                         raise Exception("No se encontró SQL en el archivo")
 
-                    all_sql_results[rpt_file] = [{
-                        "file_route": str(rpt_file),
-                        "db_name": str(db_name),
-                        "sql": str(sql_query),
-                        "file_name": os.path.basename(rpt_file),
-                        "descripcion_query": "Consulta extraída con éxito."                      
-                    }]
+                    records = []
 
+                    if tables:
+                        for table in tables:
+                            records.append({
+                                "file_route": str(rpt_file),
+                                "db_name": str(db_name),
+                                "sql": str(sql_query),
+                                "file_name": os.path.basename(rpt_file),
+                                "tables": table, 
+                                "descripcion_query": "Consulta extraída con éxito."
+                            })
+                    all_sql_results[rpt_file] = records
                 except Exception as e:
                     # guardar error y continuar
                     all_sql_results[rpt_file] = [{
@@ -247,11 +271,11 @@ class ScriptsViewSet(viewsets.GenericViewSet):
                         "db_name": "",
                         "sql": "",
                         "file_name": os.path.basename(rpt_file),
+                        "tables": "",
                         "descripcion_query": f"ERROR: {str(e)}",
                     }]
-                    continue  # sigue con el siguiente archivo
+                    continue  
             result = download_extract_sql_server_template(all_sql_results)
-            print(type(result), result)
             return result
         except Exception as e:
             return FormatResponse.failed(e)
