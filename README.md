@@ -37,7 +37,7 @@ El entorno virtual sirve para **aislar dependencias del proyecto** y evitar conf
 
 ### 1️⃣ Verificar Python instalado
 
-```bash
+
 python --version
 
  ¿Qué hace esto?
@@ -97,3 +97,16 @@ python manage.py runserver 0.0.0.0:8000
 
 Inicia el servidor Django
 Expone la API en http://localhost:8000
+
+
+##  Compatibilidad con Linux y Docker
+
+Este proyecto **no es compatible con Linux ni con Docker Linux containers** debido al uso de tecnologías específicas de Windows.
+
+### 🧠 ¿Por qué no funciona en Linux?
+
+El proyecto utiliza `win32com.client`, que depende del sistema de automatización **COM (Component Object Model)** de Windows.
+
+```python
+import win32com.client
+cr_app = win32com.client.Dispatch("CrystalRuntime.Application")
