@@ -52,92 +52,123 @@ class ScriptsViewSet(viewsets.GenericViewSet):
             return sorted(tables) 
         except Exception as e:
             raise e
+        
+    def apply_parameters(self, report, params, start_date, end_date, year, month, day):
+        """
+        🔥 Reutilizamos tu lógica para principal y subreportes
+        """
+        report.EnableParameterPrompting = False
 
+        for param_field in report.ParameterFields:
+            raw_name = param_field.ParameterFieldName
+            name = self.normalize_param_name(raw_name)
+
+            print(f"PARAM: {raw_name}")
+
+            try:
+                param_field.ClearCurrentValueAndRange()
+
+                default_values = {
+                    'ano': year, 'year': year, 'anio': year,
+                    'mes': month, 'month': month,
+                    'dia': day, 'day': day,
+                    'fecini': start_date,
+                    'fecfin': end_date,
+                    'division': '1',
+                    'periodo': f"{year}{month:02d}",
+                }
+
+                assigned = False
+                for key, value in default_values.items():
+                    if key in name:
+                        param_field.AddCurrentValue(value)
+                        assigned = True
+                        print(f"Asignado: {key} = {value}")
+                        break
+
+                if not assigned:
+                    value_type = param_field.ValueType
+                    if value_type == 7:
+                        param_field.AddCurrentValue(start_date)
+                    elif value_type == 12:
+                        param_field.AddCurrentValue("")
+                    else:
+                        param_field.AddCurrentValue(0)
+
+            except Exception as e:
+                print(f"⚠ Error (ignorado): {e}")
+                continue
+            
     def extract_sql_from_rpt(self, rpt_path: str, params: dict = None):
         try:
             pythoncom.CoInitialize()
             cr_app = win32com.client.Dispatch("CrystalRuntime.Application")
-            
             rpt = cr_app.OpenReport(rpt_path)
-            
+
             # DB
             db_name = None
             for table in rpt.Database.Tables:
                 location = table.Location.strip()
                 db_name = location.split('.')[0]
-            
+
             # Params seguros
             today = date.today()
-            
+            params = params or {}
+
             year = int(params.get("year", today.year))
             month = int(params.get("month", today.month))
             day = int(params.get("day", today.day))
-            
+
             _, last_day = cal.monthrange(year, month)
-            
+
             start_date = pywintypes.Time(datetime(year, month, day, 0, 0, 0))
             end_date = pywintypes.Time(datetime(year, month, last_day, 23, 59, 59))
-            
-            print( year, month, day, start_date, end_date)
-            
-            # Deshabilitar prompting
-            rpt.EnableParameterPrompting = False
-            
-            # Intentar asignar TODOS los parámetros de forma genérica
-            for param_field in rpt.ParameterFields:
-                raw_name = param_field.ParameterFieldName
-                name = self.normalize_param_name(raw_name)
-                
-                print(f"PARAM: {raw_name}")
-                
-                try:
-                    param_field.ClearCurrentValueAndRange()
-                    
-                    # Diccionario de valores por defecto según patrones
-                    default_values = {
-                        'ano': year, 'year': year, 'anio': year,
-                        'mes': month, 'month': month,
-                        'dia': day, 'day': day,
-                        'fecini': start_date,
-                        'fecfin': end_date,
-                        'division': '1',
-                        'periodo': f"{year}{month:02d}",
-                    }
-                    
-                    # Buscar si el nombre del parámetro coincide con alguna clave
-                    assigned = False
-                    for key, value in default_values.items():
-                        if key in name:
-                            param_field.AddCurrentValue(value)
-                            assigned = True
-                            print(f"Asignado: {key} = {value}")
-                            break
-                    
-                    if not assigned:
-                        # Si no coincide con nada, asignar según el tipo
-                        value_type = param_field.ValueType
-                        if value_type == 7:  # Fecha
-                            param_field.AddCurrentValue(start_date)
-                        elif value_type == 12:  # String
-                            param_field.AddCurrentValue("")
-                        else:  # Número
-                            param_field.AddCurrentValue(0)
-                        print(f"  ⚠ Asignado valor por defecto (type={value_type})")
-                        
-                except Exception as e:
-                    print(f" ⚠ Error (ignorado): {e}")
-                    continue
-            
-            # Obtener SQL - esto es lo único que nos importa
-            sql_query = rpt.SQLQueryString
-            
-            if not sql_query:
-                raise Exception(f"No se encontró SQL en {rpt_path}")
-            
-            print(f" SQL extraído exitosamente")
-            
-            return {"sql_query": sql_query, "db_name": db_name}
-            
+
+            print(year, month, day, start_date, end_date)
+
+            queries = []
+
+            # 1. APLICAR PARAMETROS AL PRINCIPAL
+            self.apply_parameters(rpt, params, start_date, end_date, year, month, day)
+
+            main_sql = rpt.SQLQueryString
+            if main_sql:
+                queries.append({
+                    "sql": main_sql,
+                    "is_main": True,
+                    "subreport_name": "No aplica"
+                })
+
+            #  2. SUBREPORTES (CON PARAMETROS TAMBIÉN)
+            for section in rpt.Sections:
+                for obj in section.ReportObjects:
+                    if obj.Kind == 5:  # Subreport
+
+                        subreport_name = obj.SubreportName  
+
+                        sub = obj.OpenSubreport()
+
+                        self.apply_parameters(sub, params, start_date, end_date, year, month, day)
+
+                        sub_sql = sub.SQLQueryString
+
+                        print("Subreporte:", subreport_name)
+
+                        if sub_sql:
+                            queries.append({
+                                "sql": sub_sql,
+                                "is_main": False,
+                                "subreport_name": subreport_name  
+                            })
+
+            if not queries:
+                raise Exception(f"No se encontraron consultas en {rpt_path}")
+
+            return {
+                "queries": queries,
+                "db_name": db_name
+            }
+
         except Exception as e:
             print(f"Error en extract_sql_from_rpt: {e}")
             raise
@@ -242,25 +273,39 @@ class ScriptsViewSet(viewsets.GenericViewSet):
                 try:
                     result = self.extract_sql_from_rpt(rpt_file, serializer.validated_data)
 
-                    sql_query = result.get("sql_query")
+                    queries = result.get("queries")
                     db_name = result.get("db_name")
-                    tables = self.extract_tables_from_sql(sql_query)
-                    print("sql_query: ",sql_query)
-                    print("db_name: ",db_name)
-                    
-                    if not sql_query:
-                        raise Exception("No se encontró SQL en el archivo")
 
                     records = []
 
-                    if tables:
-                        for table in tables:
+                    for q in queries:
+                        sql_query = q["sql"]
+                        is_main = q["is_main"]
+                        subreport_name = q["subreport_name"]
+                        print("sql_query: ",sql_query)
+                        tables = self.extract_tables_from_sql(sql_query)
+
+                        if tables:
+                            for table in tables:
+                                records.append({
+                                    "file_route": str(rpt_file),
+                                    "db_name": str(db_name),
+                                    "sql": str(sql_query),
+                                    "file_name": os.path.basename(rpt_file),
+                                    "tables": table,
+                                    "es_principal": "SI" if is_main else "NO",
+                                    "subreport_name": subreport_name,
+                                    "descripcion_query": "Consulta extraída con éxito."
+                                })
+                        else:
                             records.append({
                                 "file_route": str(rpt_file),
                                 "db_name": str(db_name),
                                 "sql": str(sql_query),
                                 "file_name": os.path.basename(rpt_file),
-                                "tables": table, 
+                                "tables": "",
+                                "es_principal": "SI" if is_main else "NO",
+                                "subreport_name": "",
                                 "descripcion_query": "Consulta extraída con éxito."
                             })
                     all_sql_results[rpt_file] = records
@@ -272,6 +317,8 @@ class ScriptsViewSet(viewsets.GenericViewSet):
                         "sql": "",
                         "file_name": os.path.basename(rpt_file),
                         "tables": "",
+                        "es_principal": "",
+                        "subreport_name":"",
                         "descripcion_query": f"ERROR: {str(e)}",
                     }]
                     continue  
