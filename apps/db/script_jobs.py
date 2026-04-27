@@ -88,8 +88,31 @@ class SQLServerService:
 
         except Exception as e:
             print(f"Error extrayendo DML completo: {e}")
-            return []      
+            return []   
+           
+    def is_table_validate(self, name: str):
+        try:
+            if not name:
+                return False
+
+            name = name.strip().upper()
+
+            if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', name):
+                return False
+
+            if re.match(r'^\[\d{1,3}(\.\d{1,3}){3}\]$', name):
+                return False
+
+            invalidas = {"SELECT", "FROM", "WHERE", "SET", "INTO", "EXEC"}
+            if name in invalidas:
+                return False
+
+            return True
+        except Exception as e:
+            print(f"Error validando nombre de tabla: {e}")
+            return False
         
+
     def extraer_dml_detalle(self, sql: str):
         try:
             if not sql:
@@ -99,10 +122,10 @@ class SQLServerService:
             sql = re.sub(r'--.*', '', sql)
 
             patrones = [
-                (r'INSERT\s+INTO\s+([a-zA-Z0-9_\.\[\]]+)', 'INSERT'),
-                (r'UPDATE\s+([a-zA-Z0-9_\.\[\]]+)', 'UPDATE'),
+                (r'INSERT\s+(?:INTO\s+)?([a-zA-Z0-9_\.\[\]]+)', 'INSERT'),
+                (r'UPDATE\s+[a-zA-Z0-9_\.\[\]]+\s+SET[\s\S]+?FROM\s+([a-zA-Z0-9_\.\[\]]+)', 'UPDATE'),
+                (r'TRUNCATE\s+(?:TABLE\s+)?([a-zA-Z0-9_\.\[\]]+)', 'TRUNCATE'),
                 (r'DELETE\s+FROM\s+([a-zA-Z0-9_\.\[\]]+)', 'DELETE'),
-                (r'TRUNCATE\s+TABLE\s+([a-zA-Z0-9_\.\[\]]+)', 'TRUNCATE'),
             ]
 
             resultados = []
@@ -112,21 +135,27 @@ class SQLServerService:
                 matches = re.finditer(patron, sql, re.IGNORECASE)
 
                 for m in matches:
+
                     tabla = m.group(1).upper().strip()
+                    tabla = tabla.replace('[','').replace(']','')
 
-                    clave = (tipo, tabla)
+                    if not self.is_table_validate(tabla):
+                        continue
+                    
+                    action = tipo
 
-                    # evita duplicados SOLO si es misma acción + tabla
+                    clave = (action, tabla)
+
                     if clave in vistos:
                         continue
 
                     vistos.add(clave)
+
                     resultados.append({
-                        "action": tipo,
+                        "action": action,
                         "table": tabla,
                         "statement": m.group(0).strip()
                     })
-
             return resultados
 
         except Exception as e:
@@ -197,9 +226,10 @@ class SQLServerService:
                     for row in cursor.fetchall():
                         item = dict(zip(columns, row))
                         job_id = item["IdJob"]
-                        print(f"Procesando Job: {item['NombreJob']} - Paso: {item['NombrePaso']}")  # Debug
-                        print(f"Comando SQL: {item['ComandoSQL']}")  # Debug
-                        print(f"Comando IdJob: {item['IdJob']}")  # Debug
+
+                        print(f"Procesando Job: {item['NombreJob']} - Paso: {item['NombrePaso']}")
+                        print(f"Comando SQL: {item['ComandoSQL']}")
+
                         # Agrupar por job
                         if job_id not in jobs:
                             jobs[job_id] = {
@@ -208,14 +238,13 @@ class SQLServerService:
                                 "EstadoJob": item["EstadoJob"],
                                 "TieneAgendamientoActivo": item["TieneAgendamientoActivo"],
                                 "FechaUltimaEjecucion": item["FechaUltimaEjecucion"],
-                                "Steps": []
+                                "steps_map": {}
                             }
 
                         comando = item.get("ComandoSQL", "")
-                        sp_name = self.extraer_sp(comando)
+                        comando_normalizado = re.sub(r'\s+', ' ', comando).strip().lower()
 
-                        codigo_sp = None
-                        dml_encontrado = []
+                        sp_name = self.extraer_sp(comando)
 
                         if sp_name:
                             codigo_sp = self.get_sp_definition(sp_name)
@@ -223,26 +252,85 @@ class SQLServerService:
                             dml_completo = self.extraer_dml_completo(codigo_sp)
                             dml_detalle = self.extraer_dml_detalle(codigo_sp)
                         else:
+                            codigo_sp = None
                             dml_encontrado = self.extraer_dml(comando)
                             dml_completo = self.extraer_dml_completo(comando)
                             dml_detalle = self.extraer_dml_detalle(comando)
 
-                        print("dml_encontrado: ",dml_encontrado) # Debug
-                        print("dml_completo: ",dml_completo) # Debug
-                        print("dml_detalle: ",dml_detalle) # Debug
+                        # fallback para SP sin detalle
+                        if sp_name and not dml_detalle:
+                            dml_detalle = [{
+                                "action": "EXEC",
+                                "table": sp_name.upper(),
+                                "statement": f"EXEC {sp_name}"
+                            }]
 
-                        jobs[job_id]["Steps"].append({
-                            "NumeroPaso": item["NumeroPaso"],
-                            "NombrePaso": item["NombrePaso"],
-                            "ComandoSQL": comando,
-                            "DML": dml_encontrado, 
-                            "DML_Completo": dml_completo,
-                            "StoredProcedure": sp_name,
-                            "DML_Detalle": dml_detalle,
-                            "CodigoSP": codigo_sp,
-                            "BaseDatos": item["database_name"],
-                        })
+                        print("dml_encontrado: ", dml_encontrado)
+                        print("dml_completo: ", dml_completo)
+                        print("dml_detalle: ", dml_detalle)
+
+                        if dml_detalle and dml_detalle[0].get("table"):
+
+                            accion = dml_detalle[0].get("action")
+                            tabla = dml_detalle[0].get("table")
+
+                            step_key = f"DML|{accion}|{tabla}"
+
+                        else:
+                            continue
+
+                        steps_map = jobs[job_id]["steps_map"]
+
+                        # Crear si no existe
+                        if step_key not in steps_map:
+                            steps_map[step_key] = {
+                                "ComandosSQL": [],
+                                "DML": set(),
+                                "DML_Completo": set(),
+                                "DML_Detalle": [],
+                                "DML_Detalle_keys": set(),
+                                "StoredProcedure": sp_name,
+                                "CodigoSP": codigo_sp,
+                                "BaseDatos": item["database_name"],
+                            }
+
+                        step = steps_map[step_key]
+
+                        # acumular comandos
+                        if comando not in step["ComandosSQL"]:
+                            step["ComandosSQL"].append(comando)
+
+                        # acumular DML
+                        step["DML"].update(dml_encontrado)
+                        step["DML_Completo"].update(dml_completo)
+
+                        # evitar duplicados en DML_Detalle
+                        for det in dml_detalle:
+                            key_det = (
+                                det.get("action"),
+                                det.get("table")
+                            )
+
+                            if key_det in step["DML_Detalle_keys"]:
+                                continue
+
+                            step["DML_Detalle_keys"].add(key_det)
+                            step["DML_Detalle"].append(det)
+
+                # convertir a lista final
+                for job in jobs.values():
+                    steps = []
+
+                    for step in job["steps_map"].values():
+                        step["DML"] = list(step["DML"])
+                        step["DML_Completo"] = list(step["DML_Completo"])
+                        step.pop("DML_Detalle_keys", None)
+                        steps.append(step)
+
+                    job["Steps"] = steps
+                    job.pop("steps_map", None)
 
             return list(jobs.values())
+
         except Exception as e:
             return {"error": str(e)}

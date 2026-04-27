@@ -22,7 +22,7 @@ def download_jobs_excel(jobs_data):
             # 'Nombre Paso',
             'Accion',
             'Tabla',
-            'Sentencia',
+            # 'Sentencia',
             'Base de Datos',
             'Stored Procedure'
         ]
@@ -65,9 +65,9 @@ def download_jobs_excel(jobs_data):
                     # ws.cell(row=row_idx, column=4, value=step.get("NombrePaso"))
                     ws.cell(row=row_idx, column=3, value=d.get("action"))
                     ws.cell(row=row_idx, column=4, value=d.get("table"))
-                    ws.cell(row=row_idx, column=5, value=d.get("statement"))
-                    ws.cell(row=row_idx, column=6, value=step.get("BaseDatos"))
-                    ws.cell(row=row_idx, column=7, value=step.get("StoredProcedure"))
+                    # ws.cell(row=row_idx, column=5, value=d.get("statement"))
+                    ws.cell(row=row_idx, column=5, value=step.get("BaseDatos"))
+                    ws.cell(row=row_idx, column=6, value=step.get("StoredProcedure"))
 
                     row_idx += 1
 

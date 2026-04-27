@@ -27,7 +27,7 @@ class JobsViewSet(viewsets.GenericViewSet):
         try:
             service = SQLServerService()
             data = service.get_jobs()
-            # return download_jobs_excel(data)
-            return FormatResponse.successful("Validación exitosa", data)
+            return download_jobs_excel(data)
+            # return FormatResponse.successful("Validación exitosa", data)
         except Exception as e:
             return FormatResponse.failed(e)
