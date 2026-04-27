@@ -34,7 +34,7 @@ SECRET_KEY = 'django-insecure-(%5uxe-w6s9%r!*l5)r)v^$=lc5%%#+s0+83j2^t$&pdle!u_+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -47,7 +47,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'apps.scripts'
+    'apps.scripts',
+    'apps.jobs'
+    
 ]
 
 REST_FRAMEWORK = {
@@ -102,14 +104,23 @@ DB_PASSWORD_SQL_SERVER = env('DB_PASSWORD_SQL_SERVER')
 DB_HOST_SQL_SERVER = env('DB_HOST_SQL_SERVER')
 DB_PORT_SQL_SERVER = env('DB_PORT_SQL_SERVER', default='1433')
 
+# DB_CONN_STRING = (
+#     "DRIVER={ODBC Driver 17 for SQL Server};"
+#     f"SERVER={DB_HOST_SQL_SERVER},{DB_PORT_SQL_SERVER};"
+#     f"DATABASE={DB_NAME_SQL_SERVER};"
+#     f"UID={DB_USER_SQL_SERVER};"
+#     f"PWD={DB_PASSWORD_SQL_SERVER};"
+#     "TrustServerCertificate=yes;"
+# )
+
 DB_CONN_STRING = (
-    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-    f"SERVER={DB_HOST_SQL_SERVER},{DB_PORT_SQL_SERVER};"
-    f"DATABASE={DB_NAME_SQL_SERVER};"
-    f"UID={DB_USER_SQL_SERVER};"
-    f"PWD={DB_PASSWORD_SQL_SERVER};"
+    "DRIVER={ODBC Driver 17 for SQL Server};"
+    "SERVER=192.168.1.225;"
+    "DATABASE=MEISEL_PPAL;"
+    "UID=ProyectosSoftware_zzz;"
+    "PWD=ProjectTeam;"
+    "TrustServerCertificate=yes;"
 )
-    
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 

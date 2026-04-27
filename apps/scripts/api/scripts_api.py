@@ -55,7 +55,7 @@ class ScriptsViewSet(viewsets.GenericViewSet):
         
     def apply_parameters(self, report, params, start_date, end_date, year, month, day):
         """
-        🔥 Reutilizamos tu lógica para principal y subreportes
+            Reutilizamos tu lógica para principal y subreportes
         """
         report.EnableParameterPrompting = False
 
